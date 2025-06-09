@@ -1,0 +1,26 @@
+Protocol contract architecture: 
+├── src
+│   ├── onboarding
+│   │   ├── KYCRegistry.sol: Stores and verifies off-chain signed KYC attestations (address → signature).
+│   │   └── RoleManager.sol: Assigns granular roles (LIQUIDITY_PROVIDER, MERCHANT_GATEWAY, ADMIN) via a multisig.
+│   │
+│   ├── token
+│   │   ├── StableToken.sol: erc20 mint()/burn() gated to controller roles;
+│   │   └── ShareToken.sol: Represents LP shares in each vault; minted/burned by VaultManager to reflect NAV
+│   │
+│   ├── vault
+│   │   └── VaultManager.sol: One instance per country-token. Tracks deposits (RWA token receipts), total NAV, enforces collateralizationRatio ≥ target.Captures yield offchain
+│   │
+│   ├── oracle
+│   │   ├── NavOracle.sol: On-chain storage for the latest off-chain NAV per stablecoin (from Chainlink Functions)
+│   │   └── FxOracle.sol: Stores latest fiat↔USD or fiat↔fiat rates for peg checks and cross-mint calculations.
+│   │
+│   ├── peg
+│   │   └── PegController.sol: Reads VaultManager’s ratio and market price (via AMM lookup); adjusts mint/burn fees dynamically; can draw from buffer/insurance pools.
+│   │
+│   ├── bridge
+│   │   └── BridgeAdapter.sol: Future implementation for cross chain using CCIP
+│   │
+│   └── protocol
+│       ├── StableFactory.sol: Deploys new (StableToken, ShareToken, VaultManager, NavOracle) bundles per country.
+│       └── ProtocolController.sol: Global admin: parameter updates (haircuts, fee rates), role assignments, emergency pauses
