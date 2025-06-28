@@ -22,7 +22,7 @@ contract NavOracle is FunctionsClient, RoleManager {
     
     // For automation
     uint256 public lastUpdateTime;
-    uint256 public constant UPDATE_INTERVAL = 24 hours;
+    uint256 public constant UPDATE_INTERVAL = 30 minutes;
 
     event PriceRequested(bytes32 indexed requestId, address indexed asset);
     event PriceFulfilled(bytes32 indexed requestId, address indexed asset, uint256 price);

@@ -23,7 +23,6 @@ const price = response.data.price;
 return Functions.encodeUint256(price);
 `;
 
-// local testing
 export const generateRequest = async (args) => {
   const { Functions } = require("@chainlink/functions-toolkit");
   

@@ -13,15 +13,15 @@ contract VaultManager is ERC4626, RoleManager {
 
     struct Asset {
         IERC20 token;
-        uint256 navPerToken;  // 18-decimals NAV
-        uint256 haircutBP;    // basis points
+        uint256 navPerToken;  
+        uint256 haircutBP;   
         bool    active;
         uint256 totalDeposited;
     }
 
-    mapping(address=>Asset) public assets;
+    mapping(address=>Asset) public assets;    
     address[] public assetList;
-    uint256 public totalValue;    // sum of NAV-adjusted, haircut-applied deposits
+    uint256 public totalValue;   
 
     constructor(
       IERC20 _dummy, 
@@ -33,13 +33,11 @@ contract VaultManager is ERC4626, RoleManager {
         _grantRole(ADMIN, msg.sender);
     }
 
-    /// @notice Add a mock collateral asset for PoC
     function addAsset(address a, uint256 haircutBP) external onlyRole(ADMIN) {
         assets[a] = Asset(IERC20(a), 1e18, haircutBP, true, 0);
         assetList.push(a);
     }
 
-    /// @notice Batch deposit of any number of assets; mints ERC4626 shares
     function depositBatch(address[] calldata as_, uint256[] calldata amts) external {
         require(as_.length == amts.length, "VM: bad input");
         uint256 sum;
@@ -56,27 +54,25 @@ contract VaultManager is ERC4626, RoleManager {
             A.totalDeposited += amt;
         }
 
-        totalValue += sum;
         uint256 shares = totalSupply() == 0
-          ? sum
-          : (sum * totalSupply()) / totalValue;
+        ? sum
+        : (sum * totalSupply()) / totalValue;  
 
+        totalValue += sum;
         _mint(msg.sender, shares);
     }
 
-    /// @notice Update per-token NAV (price moves)
+
     function updateAssetNav(address a, uint256 nav) external onlyRole(SENTINEL) {
         Asset storage A = assets[a];
         require(A.active, "VM: !asset");
         A.navPerToken = nav;
     }
 
-    /// @notice Credit total yield (coupons/dividends) to all LPs
     function recordAccruedYield(uint256 yieldAmt) external onlyRole(SENTINEL) {
         totalValue += yieldAmt;
     }
 
-    /// @dev ERC4626 totalAssets = vault NAV
     function totalAssets() public view override returns (uint256) {
         return totalValue;
     }
@@ -84,8 +80,6 @@ contract VaultManager is ERC4626, RoleManager {
     function getAssetList() external view returns (address[] memory) {
         return assetList;
     }
-
-    // Also add a function to grant SENTINEL role to the oracle
     function grantSentinelRole(address oracle) external onlyRole(ADMIN) {
         _grantRole(SENTINEL, oracle);
     }
