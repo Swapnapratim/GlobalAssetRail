@@ -1,64 +1,51 @@
-// fetchNav.js
-import { Functions } from "@chainlink/functions-toolkit";
-import { ethers }    from "ethers";
+const source = `
+const assetAddress = args[0] || "0xbDcfBEd3188040926bbEaBD70a25cFbE081F428d";
+const CUSTODY_API = "https://api.com"; 
 
-export const generateRequest = async (assetKey) => {
-  const CUSTODY_API = "https://your.api.domain";
+const custodyRequest = Functions.makeHttpRequest({
+  url: \`\${CUSTODY_API}/getAssetPrice\`,
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  data: { assetAddress }
+});
 
-  let totalNav = ethers.BigNumber.from(0);
+const response = await custodyRequest;
 
-  if (assetKey.startsWith("BALANCE_")) {
-    // portfolio NAV for an institution
-    const addr = assetKey.split("_")[1];
-    const resp = await Functions.fetch(`${CUSTODY_API}/balance/${addr}`);
-    const balData = await resp.json(); // { "INR-SOV-01":"1000000", ... }
+if (response.error) {
+  throw Error("Request failed");
+}
 
-    // iterate each holding
-    for (const [key, amtStr] of Object.entries(balData)) {
-      const cfg = await getAssetConfig(key);
-      const price = await fetchPrice(key);
-      const amt   = ethers.BigNumber.from(amtStr);
-      // apply haircut: net = amt * price * (1 - haircutBP/10000)
-      const gross = amt.mul(price).div(ethers.BigNumber.from(10).pow(cfg.decimals));
-      const net   = gross.mul(10000 - cfg.haircutBP).div(10000);
-      totalNav = totalNav.add(net);
-    }
-  } else {
-    // single‐asset NAV
-    const price = await fetchPrice(assetKey);
-    totalNav = ethers.BigNumber.from(price);
+const price = response.data.price;
+
+// Return the price as bytes
+return Functions.encodeUint256(price);
+`;
+
+// local testing
+export const generateRequest = async (args) => {
+  const { Functions } = require("@chainlink/functions-toolkit");
+  
+  const assetAddress = args[0] || "0xbDcfBEd3188040926bbEaBD70a25cFbE081F428d";
+  const CUSTODY_API = "http://localhost:3000";
+  
+  const resp = await Functions.makeHttpRequest({
+    url: `${CUSTODY_API}/getAssetPrice`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    data: { assetAddress }
+  });
+  
+  if (resp.error) {
+    throw Error("Request failed");
   }
-
-  // return raw uint256 NAV
-  const encoded = Functions.encodeAbiParameters(["uint256"], [totalNav.toString()]);
-  return Functions.standardResponse(encoded);
+  
+  const price = resp.data.price;
+  
+  return Functions.encodeUint256(price);
 };
 
-// helper: map assetKey → asset config (decimals & haircutBP)
-async function getAssetConfig(key) {
-  const resp = await Functions.fetch("https://your.api.domain/assets");
-  const catalog = await resp.json();
-  return catalog[key];
-}
-
-// helper: fetch price from two mock APIs and take median
-async function fetchPrice(key) {
-  const apis = {
-    "INR-SOV-01": [
-      "https://apiA.example.com/price?symbol=INR1234",
-      "https://apiB.example.com/v1/INR1234"
-    ],
-    "INR-CORP-ABC": [ /* … */ ],
-    "GOLD-1OZ": [ /* … */ ],
-    // …
-  }[key];
-  const results = await Promise.allSettled(apis.map(u => Functions.fetch(u)));
-  const prices  = results
-    .filter(r => r.status === "fulfilled")
-    .map(r => JSON.parse(r.value).price);
-
-  if (prices.length === 0) throw new Error("No price sources");
-  prices.sort((a,b)=>a-b);
-  const mid = Math.floor(prices.length/2);
-  return prices.length%2 ? prices[mid] : (prices[mid-1]+prices[mid])/2;
-}
+module.exports = { source };

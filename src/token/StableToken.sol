@@ -166,7 +166,7 @@ contract StableToken is ERC20, ERC20Permit, RoleManager, Pausable, ReentrancyGua
         withinLimits(amount, true)
         respectsCooldown(to, lastMintTimestamp[to], mintCooldown)
     {
-        VaultManager(vaultManager).mintStablecoin(to, amount);
+        // VaultManager(vaultManager).mintStablecoin(to, amount);
         _mint(to, amount);
     }
     
@@ -185,7 +185,7 @@ contract StableToken is ERC20, ERC20Permit, RoleManager, Pausable, ReentrancyGua
         withinLimits(amount, false)
         respectsCooldown(from, lastBurnTimestamp[from], burnCooldown)
     {
-        VaultManager(vaultManager).burnStablecoin(from, amount);
+        // VaultManager(vaultManager).burnStablecoin(from, amount);
         _burn(from, amount);
     }
 

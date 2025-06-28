@@ -2,88 +2,160 @@
 pragma solidity ^0.8.17;
 
 import { FunctionsClient } from "../../lib/chainlink/contracts/src/v0.8/functions/v1_3_0/FunctionsClient.sol";
-import { KeeperCompatibleInterface } from "../../lib/chainlink/contracts/src/v0.8/automation/interfaces/KeeperCompatibleInterface.sol";
-import { RoleManager } from "../onboarding/RoleManager.sol";
+import { FunctionsRequest } from "../../lib/chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
+import { Strings } from "../../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 import { VaultManager } from "../vault/VaultManager.sol";
+import { RoleManager } from "../onboarding/RoleManager.sol";
 
-/// @notice PoC NavOracle + Keeper scheduling + Chainlink Functions
-contract NavOracle is FunctionsClient, KeeperCompatibleInterface, RoleManager {
-    uint64   public subscriptionId;
-    address  public router;
-    address  public vault;
-    uint256  public lastUpkeep;
-    uint256  public interval = 24 hours;
+contract NavOracle is FunctionsClient, RoleManager {
+    using FunctionsRequest for FunctionsRequest.Request;
 
-    address[] public assets;
-    mapping(address=>string) public assetKey;
-    struct Req { address asset; bool isYield; }
-    mapping(bytes32=>Req) public pending;
+    uint64 public subscriptionId;
+    bytes32 public donId;
+    string public source;
+    string public yieldSource;
+    
+    VaultManager public vaultManager;
+    mapping(address => string) public assetKey;
+    mapping(bytes32 => address) public pendingRequests;
+    mapping(bytes32 => bool) public isYieldRequest;
+    
+    // For automation
+    uint256 public lastUpdateTime;
+    uint256 public constant UPDATE_INTERVAL = 24 hours;
 
-    event Requested(bytes32 indexed id, address indexed asset, bool isYield);
-    event Fulfilled(bytes32 indexed id, address indexed asset, bool isYield, uint256 value);
+    event PriceRequested(bytes32 indexed requestId, address indexed asset);
+    event PriceFulfilled(bytes32 indexed requestId, address indexed asset, uint256 price);
+    event YieldRequested(bytes32 indexed requestId);
+    event YieldFulfilled(bytes32 indexed requestId, uint256 totalYield);
 
-    constructor(address _link, address _router, uint64 _subId, address _vault)
-      FunctionsClient(_link)
-    {
-        subscriptionId = _subId;
-        router         = _router;
-        vault          = _vault;
-        lastUpkeep     = block.timestamp;
+    constructor(
+        address _router,
+        uint64 _subscriptionId,
+        bytes32 _donId,
+        string memory _source,
+        string memory _yieldSource,
+        address _vaultManager
+    ) FunctionsClient(_router) {
+        subscriptionId = _subscriptionId;
+        donId = _donId;
+        source = _source;
+        yieldSource = _yieldSource;
+        vaultManager = VaultManager(_vaultManager);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN, msg.sender);
+        lastUpdateTime = block.timestamp;
     }
 
-    /// @notice Register a new collateral asset and its lookup key
-    function addAsset(address a, string calldata key) external onlyRole(ADMIN) {
-        assets.push(a);
-        assetKey[a] = key;
+    function addAsset(address asset, string calldata key) external onlyRole(ADMIN) {
+        assetKey[asset] = key;
     }
 
-    /// @dev Called by Chainlink Automation every `interval`
-    function checkUpkeep(bytes calldata) external view override
-      returns (bool upkeepNeeded, bytes memory)
-    {
-        upkeepNeeded = (block.timestamp - lastUpkeep) >= interval;
-    }
-
-    function performUpkeep(bytes calldata) external override {
-        require(block.timestamp - lastUpkeep >= interval, "NavOracle: Too soon");
+    function performDailyUpdate() public {
+        require(block.timestamp >= lastUpdateTime + UPDATE_INTERVAL, "Too early for update");
+        address[] memory assets = vaultManager.getAssetList();
         for (uint i = 0; i < assets.length; i++) {
-            _request(assets[i], false);  // price/nav
-            _request(assets[i], true);   // yield
+            if (bytes(assetKey[assets[i]]).length > 0) {
+                requestAssetPrice(assets[i]);
+            }
         }
-        lastUpkeep = block.timestamp;
+        
+        // Update yields
+        requestYieldUpdate();
+        
+        lastUpdateTime = block.timestamp;
     }
 
-    function _request(address asset, bool isYield) internal {
-        bytes32 id = sendRequestTo(
-            router,
-            Functions.buildRequest("fetchNav.js", abi.encode(assetKey[asset], isYield)),
-            subscriptionId
+    function requestAssetPrice(address asset) public returns (bytes32 requestId) {
+        require(bytes(assetKey[asset]).length > 0, "Asset not registered");
+
+        FunctionsRequest.Request memory req;
+        req.initializeRequest(FunctionsRequest.Location.Inline, FunctionsRequest.CodeLanguage.JavaScript, source);
+        
+        string[] memory args = new string[](1);
+        args[0] = Strings.toHexString(uint160(asset), 20);
+        req.setArgs(args);
+
+        requestId = _sendRequest(
+            req.encodeCBOR(),
+            subscriptionId,
+            300000,
+            donId
         );
-        pending[id] = Req(asset, isYield);
-        emit Requested(id, asset, isYield);
+
+        pendingRequests[requestId] = asset;
+        emit PriceRequested(requestId, asset);
     }
 
-    /// @dev Chainlink Functions callback
-    function fulfillRequest(
-        bytes32 id,
+    function requestYieldUpdate() public returns (bytes32 requestId) {
+        require(bytes(yieldSource).length > 0, "Yield source not set");
+
+        FunctionsRequest.Request memory req;
+        req.initializeRequest(FunctionsRequest.Location.Inline, FunctionsRequest.CodeLanguage.JavaScript, yieldSource);
+        
+        string[] memory args = new string[](0);
+        req.setArgs(args);
+
+        requestId = _sendRequest(
+            req.encodeCBOR(),
+            subscriptionId,
+            300000,
+            donId
+        );
+
+        isYieldRequest[requestId] = true;
+        emit YieldRequested(requestId);
+    }
+
+    function updateAllAssetPrices() external {
+        require(block.timestamp >= lastUpdateTime + UPDATE_INTERVAL, "Too early for update");
+        
+        address[] memory assets = vaultManager.getAssetList();
+        for (uint i = 0; i < assets.length; i++) {
+            if (bytes(assetKey[assets[i]]).length > 0) {
+                requestAssetPrice(assets[i]);
+            }
+        }
+        lastUpdateTime = block.timestamp;
+    }
+
+    function _fulfillRequest(
+        bytes32 requestId,
         bytes memory response,
-        bytes memory
+        bytes memory err
     ) internal override {
-        Req memory r = pending[id];
-        delete pending[id];
-
-        uint256 val = abi.decode(response, (uint256));
-
-        if (r.isYield) {
-            // credit coupons/dividends into vault
-            VaultManager(vault).recordAccruedYield(val);
-        } else {
-            // update on-chain NAV per token
-            VaultManager(vault).updateAssetNav(r.asset, val);
+        if (err.length > 0) {
+            revert(string(err));
         }
 
-        emit Fulfilled(id, r.asset, r.isYield, val);
+        if (isYieldRequest[requestId]) {
+            delete isYieldRequest[requestId];
+            uint256 totalYield = abi.decode(response, (uint256));
+            
+            if (totalYield > 0) {
+                vaultManager.recordAccruedYield(totalYield);
+            }
+            
+            emit YieldFulfilled(requestId, totalYield);
+        } else {
+            require(pendingRequests[requestId] != address(0), "Request not found");
+            
+            address asset = pendingRequests[requestId];
+            delete pendingRequests[requestId];
+
+            uint256 price = abi.decode(response, (uint256));
+            uint256 navPerToken = price * 1e18;
+            
+            vaultManager.updateAssetNav(asset, navPerToken);
+            emit PriceFulfilled(requestId, asset, price);
+        }
+    }
+
+    function updateSource(string memory _source) external onlyRole(ADMIN) {
+        source = _source;
+    }
+
+    function setVaultManager(address _vaultManager) external onlyRole(ADMIN) {
+        vaultManager = VaultManager(_vaultManager);
     }
 }

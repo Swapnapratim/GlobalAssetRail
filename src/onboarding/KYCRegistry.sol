@@ -51,7 +51,7 @@ contract KYCRegistry is RoleManager {
 
     mapping(address participant => InstitiutionStorage institutionStorage) public s_institutionData;
     mapping(string name => Attestation attestation) public s_attestation;  
-    mapping(bytes32 selector => mapping(uint256 requestId => Phase phase)) public s_requestData;
+    mapping(bytes32 selector => mapping(address participant => Phase phase)) public s_requestData;
 
     modifier onlySentinel() {
         require(hasRole(SENTINEL, msg.sender), 'NOT SENTINEL');
@@ -59,7 +59,7 @@ contract KYCRegistry is RoleManager {
     }
     constructor() {}
 
-    function requestRegisterInstitution(InstitutionOnboardingData memory data) external returns(uint256 requestId){
+    function requestRegisterInstitution(InstitutionOnboardingData memory data) external returns(address participant){
         // it will be request based so I need a request id
         // how do i generate a request id
         // if msg.sender is pariticipant , then no delegetee, just verify whether signature matches with pariticipant
@@ -83,24 +83,24 @@ contract KYCRegistry is RoleManager {
         address signer = ECDSA.recover(messageHash, data.signature);
         if(signer != data.participant)
             revert("SIGNER IS NOT PARTICIPANT");
-        requestId = uint256(messageHash);
+        // requestId = uint256(messageHash);
         // form a request id and store it for admin or related to check and verify
-        s_requestData[this.requestRegisterInstitution.selector][requestId] = Phase.REQUESTED;
+        s_requestData[this.requestRegisterInstitution.selector][data.participant] = Phase.REQUESTED;
         // generate a request id and keep it into storage until it is executed and delete it after that 
-        return requestId;
+        return data.participant;
     }   
     function executeRegisterInstitution(
-        uint256 requestId, 
+        address participant, 
         bool isVerified, 
         InstitutionOnboardingData memory data
     ) external onlySentinel {
         // check if it is cancelled or already executed;
-        if(s_requestData[this.requestRegisterInstitution.selector][requestId] == Phase.CANCELLED) 
+        if(s_requestData[this.requestRegisterInstitution.selector][participant] == Phase.CANCELLED) 
             revert('REQUEST ALREADY CANCELLED');
-        if(s_requestData[this.requestRegisterInstitution.selector][requestId] == Phase.VERIFIED) 
+        if(s_requestData[this.requestRegisterInstitution.selector][participant] == Phase.VERIFIED) 
             revert('REQUEST ALREADY VERIFIED');
         if(isVerified)
-            s_requestData[this.requestRegisterInstitution.selector][requestId] = Phase.VERIFIED;
+            s_requestData[this.requestRegisterInstitution.selector][participant] = Phase.VERIFIED;
         
         InstitiutionStorage memory institutionStorage;
 
@@ -118,6 +118,4 @@ contract KYCRegistry is RoleManager {
         _grantRole(INSTITUTION, data.participant);
     }
     function revokeRegistrationMultiSig() external {}
-
-    
 }
