@@ -80,4 +80,13 @@ contract VaultManager is ERC4626, RoleManager {
     function totalAssets() public view override returns (uint256) {
         return totalValue;
     }
+
+    function getAssetList() external view returns (address[] memory) {
+        return assetList;
+    }
+
+    // Also add a function to grant SENTINEL role to the oracle
+    function grantSentinelRole(address oracle) external onlyRole(ADMIN) {
+        _grantRole(SENTINEL, oracle);
+    }
 }
