@@ -1,112 +1,131 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-import { FunctionsClient } from "../../lib/chainlink/contracts/src/v0.8/functions/v1_3_0/FunctionsClient.sol";
-import { FunctionsRequest } from "../../lib/chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
-import { VaultManager } from "../vault/VaultManager.sol";
+Sarvagna Kadiya, [29 Jun 2025 at 7:56:46 PM]:
+...// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
 
-contract DepositOracle is FunctionsClient {
+import {FunctionsClient} from "../../lib/chainlink/contracts/src/v0.8/functions/v1_3_0/FunctionsClient.sol";
+import {FunctionsRequest} from "../../lib/chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
+import {Strings} from "../../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
+import {VaultManager} from "../vault/VaultManager.sol";
+import {RoleManager} from "../onboarding/RoleManager.sol";
+
+contract DepositOracle is FunctionsClient, RoleManager {
     using FunctionsRequest for FunctionsRequest.Request;
 
-    VaultManager public vaultManager;
-    address public protocolOwner;
     uint64 public subscriptionId;
     bytes32 public donId;
-    string public source;
-    
-    mapping(bytes32 => string) public pendingRequests;
-    mapping(string => DepositData) public depositDetails;
+    string public depositSource;
 
-    struct DepositData {
-        address institution;
-        address assetAddress;
-        uint256 amount;
-        bool processed;
-    }
+    VaultManager public vaultManager;
+    mapping(bytes32 => address) public pendingRequests;
+    mapping(bytes32 => address) public requestUser; // Track which user made the request
 
-    event DepositInitiated(string indexed depositId, bytes32 indexed requestId);
-    event DepositCompleted(string indexed depositId);
-    event DepositFailed(string indexed depositId, string reason);
-    
-    modifier onlyProtocol() {
-        require(msg.sender == protocolOwner, "ONLY_PROTOCOL");
-        _;
-    }
+    event DepositRequested(bytes32 indexed requestId, address indexed user);
+    event DepositFulfilled(
+        bytes32 indexed requestId,
+        address indexed user,
+        address[] assets,
+        uint256[] amounts
+    );
 
     constructor(
         address _router,
-        address _vaultManager,
-        address _protocolOwner,
         uint64 _subscriptionId,
         bytes32 _donId,
-        string memory _source
+        string memory _depositSource,
+        address _vaultManager
     ) FunctionsClient(_router) {
-        vaultManager = VaultManager(_vaultManager);
-        protocolOwner = _protocolOwner;
         subscriptionId = _subscriptionId;
         donId = _donId;
-        source = _source;
+        depositSource = _depositSource;
+        vaultManager = VaultManager(_vaultManager);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ADMIN, msg.sender);
     }
-    
-    function processDeposit(string calldata depositId) external onlyProtocol returns (bytes32 requestId) {
+
+    function requestDeposit(
+        address user,
+        address[] calldata assets,
+        uint256[] calldata amounts
+    ) external returns (bytes32 requestId) {
+        require(assets.length == amounts.length, "Arrays length mismatch");
+        require(assets.length > 0, "Empty arrays");
+
         FunctionsRequest.Request memory req;
-        req.initializeRequest(FunctionsRequest.Location.Inline, FunctionsRequest.CodeLanguage.JavaScript, source);
-        
-        string[] memory args = new string[](1);
-        args[0] = depositId;
+        req.initializeRequest(
+            FunctionsRequest.Location.Inline,
+            FunctionsRequest.CodeLanguage.JavaScript,
+            depositSource
+        );
+
+        // Pass user address and asset/amount data to the function
+        string[] memory args = new string[](3);
+        args[0] = Strings.toHexString(uint160(user), 20);
+        args[1] = _encodeAddressArray(assets);
+        args[2] = _encodeUintArray(amounts);
         req.setArgs(args);
 
-        requestId = _sendRequest(req.encodeCBOR(), subscriptionId, 300000, donId);
-        pendingRequests[requestId] = depositId;
-        
-        emit DepositInitiated(depositId, requestId);
-    }
-    
-    function _fulfillRequest(bytes32 requestId, bytes memory response, bytes memory err) internal override {
-        string memory depositId = pendingRequests[requestId];
-        delete pendingRequests[requestId];
+        requestId = _sendRequest(
+            req.encodeCBOR(),
+            subscriptionId,
+            300000,
+            donId
+        );
 
+        pendingRequests[requestId] = user;
+        requestUser[requestId] = user;
+        emit DepositRequested(requestId, user);
+    }
+
+    function _fulfillRequest(
+        bytes32 requestId,
+        bytes memory response,
+        bytes memory err
+    ) internal override {
         if (err.length > 0) {
-            emit DepositFailed(depositId, string(err));
-            return;
+            revert(string(err));
         }
 
-        string memory status = string(response);
-        
-        if (keccak256(bytes(status)) == keccak256(bytes("OK"))) {
-            _executeOnChainDeposit(depositId);
-            emit DepositCompleted(depositId);
-        } else {
-            emit DepositFailed(depositId, status);
-        }
-    }
-    
-    function _executeOnChainDeposit(string memory depositId) internal {
-        DepositData memory deposit = depositDetails[depositId];
-        require(!deposit.processed, "Deposit already processed");
-        require(deposit.institution != address(0), "Invalid deposit data");
-        
-        address[] memory assets = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
-        
-        assets[0] = deposit.assetAddress;
-        amounts[0] = deposit.amount;
-        
-        depositDetails[depositId].processed = true;
-        
+        require(pendingRequests[requestId] != address(0), "Request not found");
+
+        address user = pendingRequests[requestId];
+        delete pendingRequests[requestId];
+        delete requestUser[requestId];
+
+        // Decode the response to get assets and amounts
+        (address[] memory assets, uint256[] memory amounts) = abi.decode(
+            response,
+            (address[], uint256[])
+        );
+
+        // Call depositBatch on VaultManager
+        // Note: This will fail if the user hasn't approved the tokens to this contract
+        // In a real implementation, you might need to handle token approvals differently
         vaultManager.depositBatch(assets, amounts);
+
+        emit DepositFulfilled(requestId, user, assets, amounts);
     }
 
-    function setDepositData(
-        string calldata depositId,
-        address institution,
-        address assetAddress,
-        uint256 amount
-    ) external onlyProtocol {
-        depositDetails[depositId] = DepositData({
-            institution: institution,
-            assetAddress: assetAddress,
-            amount: amount,
-            processed: false
-        });
+    function _encodeAddressArray(
+        address[] memory addresses
+    ) internal pure returns (string memory) {
+        bytes memory encoded = abi.encode(addresses);
+        return Strings.toHexString(encoded);
+    }
+
+    function _encodeUintArray(
+        uint256[] memory values
+    ) internal pure returns (string memory) {
+        bytes memory encoded = abi.encode(values);
+        return Strings.toHexString(encoded);
+    }
+
+    function updateDepositSource(
+            string memory _depositSource
+        ) external onlyRole(ADMIN) {
+            depositSource = _depositSource;
+    }
+
+    function setVaultManager(address _vaultManager) external onlyRole(ADMIN) {
+        vaultManager = VaultManager(_vaultManager);
     }
 }
