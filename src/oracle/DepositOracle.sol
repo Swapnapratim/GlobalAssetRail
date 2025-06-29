@@ -1,5 +1,4 @@
-Sarvagna Kadiya, [29 Jun 2025 at 7:56:46 PM]:
-...// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
 import {FunctionsClient} from "../../lib/chainlink/contracts/src/v0.8/functions/v1_3_0/FunctionsClient.sol";
@@ -46,7 +45,7 @@ contract DepositOracle is FunctionsClient, RoleManager {
         address user,
         address[] calldata assets,
         uint256[] calldata amounts
-    ) external returns (bytes32 requestId) {
+    ) external onlyRole(INSTITUTION) returns (bytes32 requestId) {
         require(assets.length == amounts.length, "Arrays length mismatch");
         require(assets.length > 0, "Empty arrays");
 
@@ -91,38 +90,72 @@ contract DepositOracle is FunctionsClient, RoleManager {
         delete pendingRequests[requestId];
         delete requestUser[requestId];
 
-        // Decode the response to get assets and amounts
-        (address[] memory assets, uint256[] memory amounts) = abi.decode(
-            response,
-            (address[], uint256[])
-        );
+        // For simplicity, we'll assume the Chainlink Function returns the data in a simple format
+        // In production, you'd want to parse JSON properly or use a more structured response format
 
-        // Call depositBatch on VaultManager
-        // Note: This will fail if the user hasn't approved the tokens to this contract
-        // In a real implementation, you might need to handle token approvals differently
-        vaultManager.depositBatch(assets, amounts);
+        // Try to decode as direct ABI encoding first
+        try this.decodeResponse(response) returns (
+            address[] memory assets,
+            uint256[] memory amounts,
+            address _for
+        ) {
+            require(_for == user, "User mismatch");
+            vaultManager.depositBatch(assets, amounts, _for);
+            emit DepositFulfilled(requestId, user, assets, amounts);
+        } catch {
+            // If direct decoding fails, the Chainlink Function might have returned a different format
+            // In this case, we'd need to implement JSON parsing or use a different response format
+            revert("Invalid response format from Chainlink Function");
+        }
+    }
 
-        emit DepositFulfilled(requestId, user, assets, amounts);
+    // External function to decode response (needed for try/catch)
+    function decodeResponse(
+        bytes memory response
+    )
+        external
+        pure
+        returns (
+            address[] memory assets,
+            uint256[] memory amounts,
+            address _for
+        )
+    {
+        return abi.decode(response, (address[], uint256[], address));
     }
 
     function _encodeAddressArray(
         address[] memory addresses
     ) internal pure returns (string memory) {
-        bytes memory encoded = abi.encode(addresses);
-        return Strings.toHexString(encoded);
+        // For simplicity, encode as comma-separated hex strings
+        string memory result = "";
+        for (uint i = 0; i < addresses.length; i++) {
+            if (i > 0) {
+                result = string.concat(result, ",");
+            }
+            result = string.concat(result, Strings.toHexString(addresses[i]));
+        }
+        return result;
     }
 
     function _encodeUintArray(
         uint256[] memory values
     ) internal pure returns (string memory) {
-        bytes memory encoded = abi.encode(values);
-        return Strings.toHexString(encoded);
+        // For simplicity, encode as comma-separated decimal strings
+        string memory result = "";
+        for (uint i = 0; i < values.length; i++) {
+            if (i > 0) {
+                result = string.concat(result, ",");
+            }
+            result = string.concat(result, Strings.toString(values[i]));
+        }
+        return result;
     }
 
     function updateDepositSource(
-            string memory _depositSource
-        ) external onlyRole(ADMIN) {
-            depositSource = _depositSource;
+        string memory _depositSource
+    ) external onlyRole(ADMIN) {
+        depositSource = _depositSource;
     }
 
     function setVaultManager(address _vaultManager) external onlyRole(ADMIN) {
