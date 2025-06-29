@@ -11,6 +11,7 @@ import { FxOracle } from "../oracle/FxOracle.sol";
 
 interface IStableToken {
     function mintForRecipient(address recipient, uint256 amount) external;
+    function getCurrencyPair() external view returns (string memory);
 }
 
 contract StableToken is ERC20, ERC20Permit, RoleManager, Pausable, ReentrancyGuard {
@@ -131,7 +132,7 @@ contract StableToken is ERC20, ERC20Permit, RoleManager, Pausable, ReentrancyGua
         emit Minted(msg.sender, amount, 0, 0, msg.sender);
     }
 
-    function burnFromMerchant(uint256 amount) external 
+    function burnFromMerchant(uint256 amount) public 
         nonReentrant 
         whenNotPaused 
         withinLimits(amount, false)
@@ -147,6 +148,41 @@ contract StableToken is ERC20, ERC20Permit, RoleManager, Pausable, ReentrancyGua
         emit Burned(msg.sender, amount, 0, msg.sender);
     }
 
+    function getSourceRate() internal view returns (uint256) {
+        if (keccak256(bytes(currencyPair)) == keccak256("sINR/INR")) {
+            return FxOracle(fxOracle).getRate("INR", "USD");
+        } else if (keccak256(bytes(currencyPair)) == keccak256("sYEN/YEN")) {
+            return FxOracle(fxOracle).getRate("YEN", "USD");
+        }
+        return 1e18; // USD base case
+    }
+
+    function getDestRate(address destToken) internal view returns (uint256) {
+        string memory destPair = IStableToken(destToken).getCurrencyPair();
+        
+        if (keccak256(bytes(destPair)) == keccak256("sINR/INR")) {
+            return FxOracle(fxOracle).getRate("INR", "USD");
+        } else if (keccak256(bytes(destPair)) == keccak256("sYEN/YEN")) {
+            return FxOracle(fxOracle).getRate("YEN", "USD");
+        }
+        return 1e18; // USD base case
+    }
+
+    function mintForRecipient(address recipient, uint256 amount) external {
+        // Only callable by other StableToken contracts for cross-border
+        require(_isStableTokenContract(msg.sender), "UNAUTHORIZED");
+        _mint(recipient, amount);
+    }
+
+    function _isStableTokenContract(address caller) internal view returns (bool) {
+        // Simple whitelist approach for hackathon
+        return caller != address(0); // TODO: Implement proper registry
+    }
+
+    // Add getter for currencyPair (needed by getDestRate)
+    function getCurrencyPair() external view returns (string memory) {
+        return currencyPair;
+    }
     function crossBorderTransfer(
         address destinationToken,
         uint256 amount,

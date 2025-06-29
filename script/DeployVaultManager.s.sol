@@ -10,9 +10,9 @@ contract DeployVaultManager is Script {
     VaultManager public vaultManager;
     
     // Asset addresses
-    address constant ASSET_1 = 0xbDcfBEd3188040926bbEaBD70a25cFbE081F428d; // INR-SGB
-    address constant ASSET_2 = 0x4F1F27A247a11b41D85c1D9B22304D8DAB8ae736; // INR-CORP
-    address constant ASSET_3 = 0x40fA3ffdefa6613680F98F75771b897F8020cdF7; // INR-MFD
+    address constant ASSET_1 = 0x3dbb0344f6C2Fe6122179Cc3795A3eB10Be458dc; // INR-SGB
+    address constant ASSET_2 = 0x50F3660D13E12eb9cAb75df95305B404E6d2d506; // INR-CORP
+    address constant ASSET_3 = 0x69617a40EA29Aabc6BCd151865cfC62e30b67012; // INR-MFD
     
     // Dummy token for ERC4626 requirement
     address constant DUMMY_TOKEN = address(0);

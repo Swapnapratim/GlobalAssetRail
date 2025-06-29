@@ -38,14 +38,14 @@ contract VaultManager is ERC4626, RoleManager {
         assetList.push(a);
     }
 
-    function depositBatch(address[] calldata as_, uint256[] calldata amts) external {
-        require(as_.length == amts.length, "VM: bad input");
+    function depositBatch(address[] calldata _assets, uint256[] calldata _amounts, address _for) external onlyRole(INSTITUTION) {
+        require(_assets.length == _amounts.length, "VM: bad input");
         uint256 sum;
 
-        for (uint i; i < as_.length; i++) {
-            Asset storage A = assets[as_[i]];
+        for (uint i; i < _assets.length; i++) {
+            Asset storage A = assets[_assets[i]];
             require(A.active, "VM: !asset");
-            uint256 amt = amts[i];
+            uint256 amt = _amounts[i];
             A.token.safeTransferFrom(msg.sender, address(this), amt);
 
             uint256 navVal = (amt * A.navPerToken) / 1e18;
@@ -59,7 +59,7 @@ contract VaultManager is ERC4626, RoleManager {
         : (sum * totalSupply()) / totalValue;  
 
         totalValue += sum;
-        _mint(msg.sender, shares);
+        _mint(_for, shares);
     }
 
 
