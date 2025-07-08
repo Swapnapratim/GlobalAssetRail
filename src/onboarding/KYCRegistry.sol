@@ -51,13 +51,16 @@ contract KYCRegistry is RoleManager {
 
     mapping(address participant => InstitiutionStorage institutionStorage) public s_institutionData;
     mapping(string name => Attestation attestation) public s_attestation;  
-    mapping(bytes32 selector => mapping(address participant => Phase phase)) public s_requestData;
+    mapping(bytes32 selector => mapping(address participant => Phase phase)) public s_requestData;  
 
     modifier onlySentinel() {
         require(hasRole(SENTINEL, msg.sender), 'NOT SENTINEL');
         _;
     }
-    constructor() {}
+    constructor() {
+        _grantRole(ADMIN, msg.sender);
+        _grantRole(SENTINEL, msg.sender);
+    }
 
     function requestRegisterInstitution(InstitutionOnboardingData memory data) external returns(address participant){
         // it will be request based so I need a request id
@@ -76,7 +79,7 @@ contract KYCRegistry is RoleManager {
                     data.delegetee,
                     data.name,
                     address(this),
-                    block.timestamp
+                    data.timestampOfRegistration
                 )
             )
         );
@@ -117,5 +120,4 @@ contract KYCRegistry is RoleManager {
         s_attestation[data.name] = attestation;
         _grantRole(INSTITUTION, data.participant);
     }
-    function revokeRegistrationMultiSig() external {}
 }
